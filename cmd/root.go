@@ -341,6 +341,7 @@ func newRootCmd(c *cli) *cobra.Command {
 		newTopCmd(c),
 		newBottomCmd(c),
 		newCheckoutCmd(c),
+		newGetCmd(c),
 		newLogCmd(c),
 		newPRCmd(c),
 		newInstallCmd(c),
