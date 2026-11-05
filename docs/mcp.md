@@ -28,6 +28,7 @@ path is resolved with `git rev-parse`; anything outside a repository returns `no
 | `stack_fold` | Merge the current branch into the branch below it, one branch and one PR; the parent survives and is checked out, or with `keep` the current branch takes the parent's place; nothing is rebased, and the next `stack_submit` closes the PR of the branch that went | `keep` | destructive |
 | `stack_untrack` | Stop tracking a branch and every branch above it, changing no commit, ref or checkout; with `only` just that branch, and the branches above are restacked onto its parent; pull requests stay open and the next `stack_submit` regroups a stack GitHub knows; `next_steps` says how to track them again | `branch` (default current), `only` | destructive |
 | `stack_rename` | Give the current branch a new name, keeping its place, commits and base; a pushed branch is renamed on GitHub first (keeping its PR and retargeting PRs based on it, `remote` in the result) and nothing changes if GitHub refuses; `local` renames only this repository and leaves the PR on the old name | `name` (required), `local` | destructive, open-world |
+| `stack_doctor` | Check git-stack's setup and the repository's stacks: git, gh and its login, the gh-stack extension and its version (v0.3.0 or later), gh stack's stack file (files still kept per worktree by gh-stack 0.2), git-stack's aliases and whether a newer release is out (reported only; updating is `git stack update`), an interrupted restack, tracked branches that are gone, empty branches under others; outside a repository (no `repo_path`) only the checks that need none. `checks` is flat, each with `parent`, `status` (`ok`, `warn`, `fail`, `skipped`, `fixed`), `summary`, `details`, `next_steps` and `fix` when it can put it right itself; `fix_error` says why a fix didn't work | `fix` (run the fixes, then check again) | open-world |
 | `stack_init` | Track branches that already exist as a new stack on a trunk; only the metadata changes, and `needsRestack` lists the branches that aren't on their parent | `branches` (bottom to top, default current), `base` | destructive (it writes the metadata, though no branch moves) |
 | `stack_pop` | Delete the current branch and take it out of its stack, leaving its changes staged on its parent; the branches above are restacked onto the parent first, and its open PR is closed by the next `stack_submit`; refuses with nothing changed when tracked files have changes, the branch isn't on its parent or the parent is checked out in another worktree | | destructive |
 | `stack_continue` | Finish an interrupted restack, modify, reorder, move or pop once the conflicts are resolved and git added | `stage_all` | destructive |
@@ -69,7 +70,9 @@ Tool errors (`isError: true`) carry a JSON object in the text content:
 Codes: `not_repo`, `not_in_stack`, `not_at_top`, `conflict`, `partial`, `rebase_active`, `locked`,
 `stacks_unavailable`, `auth_required`, `not_installed`, `unsupported`, `invalid_args`,
 `interaction_required`, `api_failure`, `disambiguate`, `modify_recovery`, `checks_failing`,
-`checks_pending`, `signing_failed`, `unknown`.
+`checks_pending`, `signing_failed`, `state_migration`, `unknown`.
+`state_migration` means gh stack's stack file is in the layout gh-stack 0.2 used (one file per
+worktree) and can't be moved into the shared file yet; `next_steps` says what is in the way.
 `signing_failed` comes from `stack_create` and `stack_modify` when git could not sign the commit,
 and from `stack_restack`, `stack_modify` and `stack_continue` when the git rebase a conflict
 needs could not sign a replayed commit; most often an SSH signing key whose passphrase nobody
