@@ -226,8 +226,8 @@ func TestSyncKeepsEmptyBranchAtTrunkTip(t *testing.T) {
 	f := newSyncFixture(t)
 	gittest.Run(t, f.dir, "branch", "empty", "main")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "empty"}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "empty"}}},
 	})}
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil || len(res.Deleted) != 0 || !branchExists(t, f.dir, "empty") {
@@ -243,7 +243,7 @@ func TestSyncDeletesBranchFastForwardedIntoTrunk(t *testing.T) {
 	gittest.Run(t, f.dir, "push", "-q", "origin", "main")
 	gittest.Run(t, f.dir, "switch", "-q", "b")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}},
 	})}
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil {
@@ -262,8 +262,8 @@ func TestSyncKeepsEmptyBranchWhoseBaseIsItsTip(t *testing.T) {
 	tip := f.rev(t, "main")
 	gittest.Run(t, f.dir, "branch", "empty", "main")
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "empty", Base: tip}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "empty", Base: tip}}},
 	})}
 	res, err := f.sync(t, app.SyncOptions{NoRestack: true})
 	if err != nil || len(res.Deleted) != 0 || !branchExists(t, f.dir, "empty") {
@@ -280,7 +280,7 @@ func TestSyncRestackKeepsOlderBaseOfBranchOnItsParent(t *testing.T) {
 	gittest.Run(t, f.dir, "switch", "-q", "b")
 	f.deps.Config.SyncPrune = config.SyncPruneNever // cleanup declines, so restack sees the branch
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a", Base: base}, {Name: "b", Base: f.rev(t, "a")}}},
 	})}
 	if _, err := f.sync(t, app.SyncOptions{}); err != nil {
 		t.Fatal(err)
@@ -506,8 +506,8 @@ func TestSyncDropsGoneBranchesFromMetadata(t *testing.T) {
 	f := newSyncFixture(t)
 	f.deps.Config.SyncPrune = config.SyncPruneNever
 	f.deps.Meta = memMeta{stack.NewGraph([]stack.Stack{
-		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}, Worktree: f.repo.TopLevel},
-		{Trunk: "main", Branches: []stack.Branch{{Name: "gone", PR: &stack.PRRef{Number: 3, Merged: true}}}, Worktree: f.repo.TopLevel},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "a"}, {Name: "b"}}},
+		{Trunk: "main", Branches: []stack.Branch{{Name: "gone", PR: &stack.PRRef{Number: 3, Merged: true}}}},
 	})}
 	if _, err := f.sync(t, app.SyncOptions{NoRestack: true}); err != nil {
 		t.Fatal(err)
@@ -647,5 +647,43 @@ func TestSyncRestackDropsAClosedParentsCommits(t *testing.T) {
 	}
 	if b := f.meta.g.Stacks[0].Branches[0]; b.Name != "b" || b.Base != f.rev(t, "main") {
 		t.Errorf("b = %+v, want its base on main", b)
+	}
+}
+
+// main is checked out in the main checkout with a file in the way of its
+// fast forward, and the stack is synced from a linked worktree after a's
+// pull request merged. main stays where it is, but the stack is synced with
+// origin/main: a goes and b is restacked onto the merge, so a submit right
+// after pushes only b's own commit.
+func TestSyncUsesRemoteTrunkWhenTrunkCantMove(t *testing.T) {
+	f := newSyncFixture(t) // on b
+	merge := f.mergeOnRemote(t, "a", 0)
+	gittest.Run(t, f.dir, "switch", "-q", "main")
+	before := f.rev(t, "main")
+	wt := filepath.Join(t.TempDir(), "wt")
+	gittest.Run(t, f.dir, "worktree", "add", "-q", wt, "b")
+	gittest.WriteFile(t, f.dir, "a.txt", "mine") // untracked where the merge writes
+	repo, err := f.deps.Git.Discover(context.Background(), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := app.New(f.deps).Sync(context.Background(), repo, app.SyncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trunk(res, "main").Status != app.TrunkDirty || f.rev(t, "main") != before {
+		t.Errorf("main should be left: %+v", trunk(res, "main"))
+	}
+	if _, ok := deleted(res, "a"); !ok || branchExists(t, f.dir, "a") {
+		t.Errorf("a should be deleted: deleted %+v kept %+v", res.Deleted, res.Kept)
+	}
+	if got := gittest.Run(t, f.dir, "rev-parse", "b~1"); got != merge {
+		t.Errorf("b should sit on the merge %s, its parent is %s", merge, got)
+	}
+	if got := gittest.Run(t, f.dir, "rev-list", "--count", "origin/main..b"); got != "1" {
+		t.Errorf("b should have one commit of its own past origin/main, has %s", got)
+	}
+	if !slices.ContainsFunc(res.Notices, func(n string) bool { return strings.Contains(n, "synced with origin/main instead") }) {
+		t.Errorf("notices = %q", res.Notices)
 	}
 }

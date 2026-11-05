@@ -3,7 +3,6 @@ package ghstack
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 
 	"github.com/DomBlack/git-stack/pkg/git"
@@ -21,14 +20,9 @@ func (b *Backend) InitStack(ctx context.Context, repo git.Repo, trunk string, br
 	return b.gh(ctx, repo, args...)
 }
 
-// AddTop runs `gh stack add <name>` without committing (we commit natively),
-// once the current branch's stack is in this worktree's file where gh stack
-// will look for it.
+// AddTop runs `gh stack add <name>` without committing (we commit natively).
 func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error {
 	if err := b.Preflight(ctx); err != nil {
-		return err
-	}
-	if err := b.adoptCurrent(ctx, repo); err != nil {
 		return err
 	}
 	err := b.gh(ctx, repo, "add", name)
@@ -45,23 +39,28 @@ func (b *Backend) AddTop(ctx context.Context, repo git.Repo, name string) error 
 	return nil
 }
 
-// adoptCurrent adopts the stack of the branch checked out here, if any.
-// When every stack is already in this worktree's file there is nothing to
-// move, so git isn't asked which branch that is.
-func (b *Backend) adoptCurrent(ctx context.Context, repo git.Repo) error {
-	r, err := b.read(repo)
-	if err != nil {
+// ImportStack runs `gh stack checkout <target>`. It only ever gets a target
+// git-stack doesn't already track, so gh stack's own local lookups miss and
+// it asks GitHub for the stack.
+func (b *Backend) ImportStack(ctx context.Context, repo git.Repo, target string) error {
+	if err := b.Preflight(ctx); err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(r.where, func(w recRef) bool { return r.files[w.file].src.gitDir != repo.GitDir }) {
-		return nil
-	}
-	branch, err := b.git.CurrentBranch(ctx, repo)
-	if errors.Is(err, git.ErrDetached) {
-		return nil
-	}
-	if err != nil {
+	err := b.gh(ctx, repo, "checkout", target)
+	se, ok := errors.AsType[*stack.Error](err)
+	if !ok {
 		return err
 	}
-	return b.adopt(ctx, repo, branch)
+	switch se.Kind {
+	case stack.KindNotInStack:
+		return stack.Newf(stack.KindNotInStack, "%s is not in a stack on GitHub", target).
+			WithDetail(se.Detail).WithCause(se.Cause)
+	case stack.KindConflict:
+		// Exit 3 from checkout is a local stack holding some of the
+		// branches in a different order, not a rebase.
+		return stack.New(stack.KindInvalidArgs, "a local stack holds some of these branches in a different order than GitHub").
+			WithSteps("git stack untrack the local branches, then run git stack get again").
+			WithDetail(se.Detail).WithCause(se.Cause)
+	}
+	return err
 }

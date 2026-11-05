@@ -120,7 +120,8 @@ You'll need:
 
 - git 2.40+
 - `gh` (the [GitHub CLI](https://cli.github.com/)) logged in via `gh auth login`, plus the stack
-  extension; `gh extension install github/gh-stack`
+  extension, v0.3.0 or later; `gh extension install github/gh-stack` (or `gh extension upgrade
+  stack`)
 
 Then grab the archive for your system from the
 [releases page](https://github.com/DomBlack/git-stack/releases). Builds are for Linux and macOS
@@ -146,7 +147,7 @@ Claude Code and Codex if you have them installed**. Each of those is on by defau
 change before it happens, and `--uninstall` removes what it recorded installing and nothing else
 (that record lives in `git config --global stack.managed*`).
 
-- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|undo|submit|sync|up|down|top|bottom|pr`
+- **Aliases** (`--aliases`): `git create|modify|absorb|reorder|move|fold|rename|untrack|track|pop|restack|continue|abort|undo|submit|sync|up|down|top|bottom|pr|get`
   and the short ones `git c|m|ab|rs|ss|u|d|t|b|co`, written with `git config --global`. Anything that
   clashes with a git builtin or an installed command is skipped, and an alias you already have is
   only replaced if you pass `--force` or say yes when asked.
@@ -544,6 +545,11 @@ so the merged branch goes and the ones above it are restacked onto trunk before 
 otherwise the next PR up would show the merged commits too. A dry run only says which branches that
 would be.
 
+GitHub won't open a PR for a branch with no commits of its own, so submit stops before pushing
+anything when such a branch (without a PR already) sits under another one it is about to submit,
+and tells you the `git stack reorder` that moves it to the top (or to pop it, or commit on it). At
+the top of what's submitted it's only a notice.
+
 Branches are pushed with `--force-with-lease`, so after a restack your branches are force
 pushed. If a branch has commits on the remote that aren't in your local one (someone else pushed
 to it), submit refuses rather than overwrite them. `git sync` pulls them in when the remote is
@@ -587,6 +593,32 @@ Flags:
 - `-s` / `--stack` only show the current stack
 - `-t` / `--trunk` check out the trunk of the current stack
 
+### `git stack get <pr|url|branch>`
+
+> Alias: `git get`
+
+Pulls a pull request down from GitHub so you can work on it, by number (`418` or `#418`), URL or
+branch name. Its branch and the rest of its stack are created locally where you don't have them,
+fast forwarded where the remote is ahead, tracked as a stack and its branch is checked out.
+
+```
+❯ git get 418
+✔ Pulled down a stack of 3 branches on main and checked out payments-retry-queue
+  created payments-db, payments-api and payments-retry-queue from the remote
+```
+
+A pull request in a stack on GitHub brings the whole stack (through `gh stack checkout`). One that
+isn't, or a repository without stacked PRs, gets the pull request and the open ones it's based on,
+down to the first base that has none, which becomes the trunk. If you already have the stack it's
+just brought up to date.
+
+Nothing is rebased or pushed, and a URL for another repository is refused. If the branch can't be
+checked out (files in the way, or it's checked out in another worktree) the stack is still got
+and you're told why. A branch that has diverged from the remote is left as it is with a
+warning, the same as `sync` does. Pull requests from forks can't be got this way (`gh pr checkout`
+checks one out without tracking it), and neither can a closed or merged one, or one based on a
+branch that's already in another of your stacks.
+
 ### `git stack pr [branch]`
 
 > Alias: `git pr`
@@ -628,11 +660,14 @@ come back. If a branch was deleted by mistake, the output says which commit it w
 Nothing gets pushed; that's what `git ss` is for. If your local trunk has diverged from the remote,
 it's only reset with `-f` or a yes at the prompt.
 
-Stacks are per worktree (that's how gh stack stores them), but sync covers all of them. A branch
+Every worktree shares one set of stacks, and sync covers all of them. A branch
 checked out in another worktree is fast forwarded there too, and like `git pull` any uncommitted
 changes it doesn't touch come along. If a change or an untracked file is in the way, the branch
 is left where it was and sync ends on `⚠ Synced, but main was not updated`, naming the files
-and the checkout, with the `git -C … stash` to run. If another git
+and the checkout, with the `git -C … stash` to run. When that branch is a trunk that was only
+behind, the stacks on it are synced with the remote's trunk instead (`origin/main`), so a branch
+whose pull request merged still goes and the ones above it are restacked past it; a submit
+straight after never pushes commits that are already in trunk. If another git
 process is holding that worktree's index lock (an IDE, a prompt or status bar running
 `git status`), sync waits up to about two seconds for it; if the lock is still there it leaves
 the branch, finishes everything else and exits non-zero saying which lock file was held. A
@@ -703,7 +738,7 @@ git modify
 ```
 
 It covers create (`--insert` too), modify, absorb, restack, reorder, move, fold, pop, untrack,
-init (`track`), sync and a rename that stayed on your machine. Every branch they touched goes back
+init (`track`), get, sync and a rename that stayed on your machine. Every branch they touched goes back
 to where it was (a branch sync or pop deleted comes back, one create made goes away), the stack
 metadata is put back exactly, and so is what you had checked out. After create, modify or absorb
 the changes they committed come back as staged changes, and after a pop you're back on the popped
@@ -809,6 +844,35 @@ Flags:
 - `--merge` merge with a merge commit
 - `--rebase` rebase the commits onto trunk as they are
 - `--squash` squash each PR into one commit
+
+
+### `git stack doctor`
+
+Checks that git-stack has everything it needs and, inside a repository, that your stacks are in
+good shape. Each check has the checks that only make sense once it passes hanging off it, so a
+missing gh doesn't also report a missing login:
+
+- git, and that it's 2.40 or later
+- gh, its login, the gh-stack extension and that it's v0.3.0 or later
+- git-stack's git aliases (one you set to something else yourself is listed, never replaced) and
+  whether a newer git-stack release is out
+- gh stack's stack file, and that no worktree still keeps its own from gh-stack 0.2 (the cause of
+  gh stack's `cannot migrate stack catalogs` error)
+- no restack waiting to be finished, every tracked branch still exists, and no branch with no
+  commits of its own sits under others (submit would stop there)
+
+Every problem comes with what to do about it, and it exits non-zero while anything fails. Outside a
+repository it runs the checks that don't need one.
+
+```sh
+git stack doctor
+git stack doctor --fix      # install or upgrade gh-stack, set missing aliases, update
+                            # git-stack, move per worktree stack files into the shared one,
+                            # forget branches that are gone; then check again
+```
+
+Flags:
+- `--fix` fix what can be fixed automatically, then check again
 
 ## Configuration
 

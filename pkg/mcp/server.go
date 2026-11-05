@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/DomBlack/git-stack/pkg/app"
+	"github.com/DomBlack/git-stack/pkg/doctor"
 	"github.com/DomBlack/git-stack/pkg/git"
 	"github.com/DomBlack/git-stack/pkg/stack"
 )
@@ -29,7 +30,13 @@ type Options struct {
 	// NewApp builds the use cases for a repository. It must never produce
 	// an App that prompts or hands over a terminal.
 	NewApp func(ctx context.Context, repo git.Repo) (*app.App, error)
-	Log    *slog.Logger
+	// NewBareApp builds the use cases outside any repository, for
+	// stack_doctor; nil means stack_doctor needs a repository too.
+	NewBareApp func(ctx context.Context) (*app.App, error)
+	// Doctors are checks stack_doctor adds to the App's own (git-stack's
+	// aliases and release).
+	Doctors []doctor.Provider
+	Log     *slog.Logger
 }
 
 // Server is the MCP server.
@@ -233,6 +240,7 @@ var cliToTool = []struct{ from, to string }{
 	{"git stack checkout --trunk", "stack_navigate {direction: \"bottom\"} then {direction: \"down\"}"},
 	{"git stack checkout", "stack_navigate {branch: ...}"},
 	{"git stack create", "stack_create"},
+	{"git stack get", "stack_get"},
 	{"git stack sync", "stack_sync"},
 	{"git stack merge --force", "stack_merge with force: true (only with the user's say so)"},
 	{"git stack merge <branch>", "stack_merge {branch: ...}"},

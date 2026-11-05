@@ -36,6 +36,8 @@ type PullRequest struct {
 	// MergeCommit is the commit the PR was merged as, "" unless merged.
 	MergeCommit string    `json:"mergeCommit,omitempty"`
 	UpdatedAt   time.Time `json:"updatedAt"`
+	// Fork is set when the head branch lives in another repository.
+	Fork bool `json:"fork,omitempty"`
 }
 
 // CreatePR describes a new pull request.
@@ -111,6 +113,14 @@ type Forge interface {
 	// ListPRs returns every pull request whose head is a branch of this
 	// repository, in one call.
 	ListPRs(ctx context.Context, repo git.Repo) ([]PullRequest, error)
+	// PR looks up one pull request by number, forks included. One that
+	// doesn't exist is a *stack.Error of kind invalid_args.
+	PR(ctx context.Context, repo git.Repo, number int) (PullRequest, error)
+	// OpenPRFor finds the open (or draft) pull request whose head is
+	// branch in this repository, however old it is; false when there is
+	// none. Pull requests from forks with a branch of the same name don't
+	// count.
+	OpenPRFor(ctx context.Context, repo git.Repo, branch string) (PullRequest, bool, error)
 	CreatePR(ctx context.Context, repo git.Repo, in CreatePR) (PullRequest, error)
 	UpdatePR(ctx context.Context, repo git.Repo, number int, in UpdatePR) error
 	// MergeStack merges pull request number together with every open pull

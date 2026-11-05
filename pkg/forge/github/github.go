@@ -140,6 +140,7 @@ func (p prJSON) toForge() forge.PullRequest {
 		Head: p.HeadRefName, Base: p.BaseRefName, UpdatedAt: p.UpdatedAt,
 	}
 	pr.HeadSHA = p.HeadRefOid
+	pr.Fork = p.IsCrossRepository
 	if p.MergeCommit != nil {
 		pr.MergeCommit = p.MergeCommit.OID
 	}
@@ -201,6 +202,38 @@ func (f *Forge) view(ctx context.Context, repo git.Repo, selector string) (forge
 		return forge.PullRequest{}, fmt.Errorf("parse gh pr view output: %w", err)
 	}
 	return p.toForge(), nil
+}
+
+// reNoSuchPR is gh's answer for a pull request number that doesn't exist.
+var reNoSuchPR = regexp.MustCompile(`(?i)could not resolve to a pullrequest|no pull requests? found`)
+
+// PR looks up pull request number through gh pr view.
+func (f *Forge) PR(ctx context.Context, repo git.Repo, number int) (forge.PullRequest, error) {
+	pr, err := f.view(ctx, repo, strconv.Itoa(number))
+	if se, ok := errors.AsType[*stack.Error](err); ok && reNoSuchPR.MatchString(se.Detail) {
+		return forge.PullRequest{}, stack.Newf(stack.KindInvalidArgs, "there is no pull request #%d", number).
+			WithDetail(se.Detail).WithCause(err)
+	}
+	return pr, err
+}
+
+// OpenPRFor asks gh for the open pull requests with branch as their head,
+// so it isn't limited to the newest ones the way ListPRs is.
+func (f *Forge) OpenPRFor(ctx context.Context, repo git.Repo, branch string) (forge.PullRequest, bool, error) {
+	res, err := f.gh(ctx, repo, "", "pr", "list", "--state", "open", "--head", branch, "--limit", "20", "--json", prFields)
+	if err != nil {
+		return forge.PullRequest{}, false, err
+	}
+	var raw []prJSON
+	if err := json.Unmarshal(res.Stdout, &raw); err != nil {
+		return forge.PullRequest{}, false, fmt.Errorf("parse gh pr list output: %w", err)
+	}
+	for _, p := range raw {
+		if !p.IsCrossRepository && p.HeadRefName == branch {
+			return p.toForge(), true, nil
+		}
+	}
+	return forge.PullRequest{}, false, nil
 }
 
 // reAlreadyClosed is gh pr close's refusal for a pull request that is

@@ -39,9 +39,7 @@ type Metadata interface {
 	// and writes the result back. fn may edit each stack's Branches (remove
 	// entries, change Head and Base, rename one by setting Name and
 	// RenamedFrom) and may also append stacks (each with a
-	// trunk and at least one branch; they are written to the current
-	// worktree's file, else the main checkout's, else a new file in the
-	// common dir) and may set or clear a stack's ID and Number (clearing
+	// trunk and at least one branch) and may set or clear a stack's ID and Number (clearing
 	// removes them from the record). It must not remove or reorder existing
 	// stacks; a stack left with no branches is removed. When fn returns an
 	// error nothing is written and the error is returned.
@@ -71,6 +69,12 @@ type Tracker interface {
 	// AddTop creates (or adopts) name on top of the current stack and checks
 	// it out. The current branch must be the top of its stack.
 	AddTop(ctx context.Context, repo git.Repo, name string) error
+	// ImportStack pulls down the forge stack holding target, a pull
+	// request number or a branch name: it creates the local branches it
+	// is missing (leaving ones that exist alone), records the stack and
+	// checks out target's branch. A target in no stack on the forge is a
+	// *Error of KindNotInStack.
+	ImportStack(ctx context.Context, repo git.Repo, target string) error
 }
 
 // SubmitOptions controls Submitter.Submit.
